@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Virtual Tour Gallery – UMass Boston VEP</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
+  <style>
+    :root {
+      --bg: #111; --card: #181818; --border: #333; --border-strong: #444;
+      --text: #eee; --muted: #aaa; --accent: #6366f1; --accent-soft: rgba(99,102,241,0.5);
+      --danger: #fca5a5;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 20px 16px 32px; }
+    header { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+    header .titles { flex: 1; min-width: 220px; }
+    h1 { margin: 0; font-size: 22px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .badge {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 3px 8px; border-radius: 999px; border: 1px solid currentColor; color: #93c5fd;
+    }
+
+    .toolbar {
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin: 18px 0 14px;
+      background: rgba(0,0,0,0.55); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    }
+    .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    .field.grow { flex: 1; min-width: 200px; }
+    input, select {
+      font: inherit; font-size: 14px; border: 1px solid var(--border); background: #222; color: var(--text);
+      padding: 8px; border-radius: 6px;
+    }
+    #count { margin-left: auto; align-self: center; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; list-style: none; margin: 0; padding: 0; }
+    .tour {
+      background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+      display: flex; flex-direction: column; transition: border-color 0.15s, transform 0.15s;
+    }
+    .tour:hover, .tour:focus-within { border-color: var(--accent); transform: translateY(-2px); }
+    .thumb { aspect-ratio: 2 / 1; background: linear-gradient(135deg, #1e1b4b, #0f172a); display: block; width: 100%; object-fit: cover; }
+    .thumb.placeholder { display: grid; place-items: center; color: #6b7280; font-size: 28px; font-weight: 700; }
+    .body { padding: 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+    .tour h2 { margin: 0; font-size: 16px; line-height: 1.3; }
+    .chip { align-self: flex-start; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: rgba(99,102,241,0.2); color: #c7d2fe; }
+    .desc { margin: 0; font-size: 13px; color: #cbd5e1; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .meta { margin-top: auto; }
+    .btn {
+      appearance: none; border: 1px solid var(--border-strong); background: #1d1d1d; color: var(--text);
+      padding: 8px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600; font-size: 14px;
+      text-decoration: none; text-align: center; transition: background 0.15s;
+    }
+    .btn:hover { background: #262626; }
+    .btn:active { background: var(--accent-soft); }
+    /* Whole card is clickable via the button's stretched hit area */
+    .tour { position: relative; }
+    .tour .open::after { content: ''; position: absolute; inset: 0; }
+
+    .state { padding: 40px 16px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 10px; line-height: 1.5; }
+    .state.error { color: var(--danger); border-color: rgba(239,68,68,0.5); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="titles">
+        <h1>Virtual Tour Gallery</h1>
+        <div class="muted">UMass Boston Virtual Experience Platform · Technovator &amp; MakerSpace</div>
+      </div>
+      <span id="demo-badge" class="badge" hidden title="Not connected to SharePoint – showing sample data">Demo data</span>
+    </header>
+
+    <div class="toolbar" role="search">
+      <label class="field grow">Search tours
+        <input id="search" type="search" placeholder="Tour name or description" autocomplete="off" />
+      </label>
+      <label class="field">Department
+        <select id="dept"><option value="">All departments</option></select>
+      </label>
+      <div id="count" class="muted" aria-live="polite"></div>
+    </div>
+
+    <div id="state" class="state" role="status">Loading tours&hellip;</div>
+    <ul id="grid" class="grid" hidden></ul>
+  </div>
+
+  <script>
+    // ── Configuration (see Setup Guide, Part 5) ──────────────────────────────
+    const CFG = {
+      siteUrl:       'https://umassboston.sharepoint.com/sites/virtual-experience',
+      toursListName: 'VirtualTours',
+      scenesListName:'TourScenes',
+      viewerUrl:     'https://umassboston.sharepoint.com/sites/virtual-experience/VEPAssets/viewer.html'
+    };
+
+    // Choices of the VirtualTours "Department" column (Setup Guide, Part 3).
+    const DEPARTMENTS = ['Architecture', 'Biology', 'Environmental Science', 'History', 'Nursing', 'Other'];
+
+    const params = new URLSearchParams(location.search);
+    const DEMO = params.has('demo') || location.hostname !== new URL(CFG.siteUrl).hostname;
+
+    const $ = (id) => document.getElementById(id);
+
+    // ── SharePoint REST ──────────────────────────────────────────────────────
+    class SPError extends Error {
+      constructor(status, message) { super(message); this.status = status; }
+    }
+
+    async function spItems(listName, query) {
+      const list = listName.replace(/'/g, "''");
+      let url = `${CFG.siteUrl}/_api/web/lists/getbytitle('${list}')/items?${new URLSearchParams(query)}`;
+      const rows = [];
+      while (url) {
+        const res = await fetch(url, {
+          credentials: 'include',
+          headers: { Accept: 'application/json;odata=nometadata' }
+        });
+        if (!res.ok) {
+          throw new SPError(res.status, `SharePoint returned ${res.status} while reading "${listName}".`);
+        }
+        const data = await res.json();
+        rows.push(...data.value);
+        url = data['odata.nextLink'];
+      }
+      return rows;
+    }
+
+    async function fetchGallery() {
+      if (DEMO) return demoGallery();
+      const [tours, scenes] = await Promise.all([
+        spItems(CFG.toursListName, {
+          $select: 'Id,Title,Description0,Department,ThumbnailUrl,Author/Title',
+          $expand: 'Author',
+          $filter: 'IsPublished eq 1',
+          $orderby: 'Modified desc',
+          $top: '500'
+        }),
+        spItems(CFG.scenesListName, {
+          $select: 'TourID,PhotoUrl,SortOrder',
+          $orderby: 'SortOrder,Id',
+          $top: '5000'
+        })
+      ]);
+      return { tours, scenes };
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    function absoluteUrl(raw) {
+      if (!raw) return '';
+      raw = raw.trim();
+      return raw.startsWith('data:') ? raw : new URL(raw, CFG.siteUrl).href;
+    }
+
+    // Full 360° photos can be 30 MB; ask SharePoint for a small preview instead.
+    function previewUrl(photoUrl) {
+      if (!photoUrl || photoUrl.startsWith('data:')) return photoUrl;
+      return `${CFG.siteUrl}/_layouts/15/getpreview.ashx?path=${encodeURIComponent(photoUrl)}`;
+    }
+
+    function tourLink(id) {
+      const url = DEMO ? new URL('viewer.html', location.href) : new URL(CFG.viewerUrl);
+      url.searchParams.set('tourId', id);
+      if (DEMO && params.has('demo')) url.searchParams.set('demo', '');
+      return url.href;
+    }
+
+    // ── Render ───────────────────────────────────────────────────────────────
+    let allTours = [];
+
+    function buildTours({ tours, scenes }) {
+      const byTour = new Map();
+      for (const s of scenes) {
+        if (!byTour.has(s.TourID)) byTour.set(s.TourID, []);
+        byTour.get(s.TourID).push(s);
+      }
+      return tours.map((t) => {
+        const ts = byTour.get(t.Id) || [];
+        const firstPhoto = ts.find((s) => s.PhotoUrl)?.PhotoUrl;
+        return {
+          id: t.Id,
+          title: t.Title || `Tour ${t.Id}`,
+          desc: (t.Description0 || '').trim(),
+          dept: t.Department || '',
+          author: t.Author?.Title || '',
+          sceneCount: ts.length,
+          thumb: t.ThumbnailUrl ? absoluteUrl(t.ThumbnailUrl) : previewUrl(absoluteUrl(firstPhoto)),
+          search: `${t.Title} ${t.Description0 || ''}`.toLowerCase()
+        };
+      });
+    }
+
+    function placeholder() {
+      const d = document.createElement('div');
+      d.className = 'thumb placeholder';
+      d.setAttribute('aria-hidden', 'true');
+      d.textContent = '360°';
+      return d;
+    }
+
+    function card(t) {
+      const li = document.createElement('li');
+      li.className = 'tour';
+
+      let thumb;
+      if (t.thumb) {
+        thumb = document.createElement('img');
+        thumb.className = 'thumb';
+        thumb.src = t.thumb;
+        thumb.alt = '';
+        thumb.loading = 'lazy';
+        thumb.addEventListener('error', () => thumb.replaceWith(placeholder()), { once: true });
+      } else {
+        thumb = placeholder();
+      }
+
+      const body = document.createElement('div');
+      body.className = 'body';
+
+      const h = document.createElement('h2');
+      h.textContent = t.title;
+      body.appendChild(h);
+
+      if (t.dept) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = t.dept;
+        body.appendChild(chip);
+      }
+      if (t.desc) {
+        const p = document.createElement('p');
+        p.className = 'desc';
+        p.textContent = t.desc;
+        body.appendChild(p);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'muted meta';
+      meta.textContent = [`${t.sceneCount} ${t.sceneCount === 1 ? 'scene' : 'scenes'}`, t.author && `by ${t.author}`]
+        .filter(Boolean).join(' · ');
+      body.appendChild(meta);
+
+      const a = document.createElement('a');
+      a.className = 'btn open';
+      a.href = tourLink(t.id);
+      a.target = '_top'; // break out of the SharePoint Embed iframe
+      a.textContent = 'Open tour';
+      a.setAttribute('aria-label', `Open tour: ${t.title}`);
+      body.appendChild(a);
+
+      li.append(thumb, body);
+      return li;
+    }
+
+    function render() {
+      const q = $('search').value.trim().toLowerCase();
+      const dept = $('dept').value;
+      const shown = allTours.filter((t) => (!dept || t.dept === dept) && (!q || t.search.includes(q)));
+
+      const grid = $('grid');
+      grid.replaceChildren(...shown.map(card));
+      grid.hidden = shown.length === 0;
+
+      const state = $('state');
+      state.classList.remove('error');
+      if (allTours.length === 0) {
+        state.textContent = 'No published tours yet. Tours appear here once IsPublished is set to Yes in the VirtualTours list.';
+        state.hidden = false;
+      } else if (shown.length === 0) {
+        state.textContent = 'No tours match your search.';
+        state.hidden = false;
+      } else {
+        state.hidden = true;
+      }
+      $('count').textContent = allTours.length
+        ? `${shown.length} of ${allTours.length} ${allTours.length === 1 ? 'tour' : 'tours'}`
+        : '';
+    }
+
+    async function main() {
+      if (DEMO) $('demo-badge').hidden = false;
+      for (const d of DEPARTMENTS) $('dept').add(new Option(d, d));
+      $('search').addEventListener('input', render);
+      $('dept').addEventListener('change', render);
+
+      try {
+        allTours = buildTours(await fetchGallery());
+      } catch (err) {
+        console.error(err);
+        const state = $('state');
+        state.classList.add('error');
+        state.textContent = (err.status === 401 || err.status === 403)
+          ? 'You don’t have access to the tour gallery. Make sure you are signed in to your UMass Boston Microsoft 365 account in this browser.'
+          : `Could not load tours. ${err.message}`;
+        return;
+      }
+      render();
+    }
+
+    // ── Demo data (only used off-SharePoint or with ?demo) ───────────────────
+    // Keep in sync with DEMO_DATA in viewer.html.
+    function demoThumb(label, hue) {
+      const w = 640, h = 320;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      const sky = g.createLinearGradient(0, 0, 0, h / 2);
+      sky.addColorStop(0, `hsl(${hue} 60% 22%)`);
+      sky.addColorStop(1, `hsl(${hue} 55% 68%)`);
+      g.fillStyle = sky; g.fillRect(0, 0, w, h / 2);
+      const ground = g.createLinearGradient(0, h / 2, 0, h);
+      ground.addColorStop(0, `hsl(${hue + 40} 25% 34%)`);
+      ground.addColorStop(1, `hsl(${hue + 40} 20% 10%)`);
+      g.fillStyle = ground; g.fillRect(0, h / 2, w, h / 2);
+      g.fillStyle = '#fff'; g.textAlign = 'center';
+      g.font = '700 28px system-ui, sans-serif';
+      g.fillText(label, w / 2, h * 0.45);
+      return c.toDataURL('image/jpeg', 0.8);
+    }
+
+    function demoGallery() {
+      const tours = [
+        { Id: 1, Title: 'Campus Center & HarborWalk', Description0: 'From the Campus Center atrium out to the HarborWalk overlooking Dorchester Bay.', Department: 'Environmental Science', IsPublished: true, Author: { Title: 'Demo Student' } },
+        { Id: 2, Title: 'Healey Library Walkthrough', Description0: 'A short walk from the library entrance into the reading room.', Department: 'History', IsPublished: true, Author: { Title: 'Demo Student' } },
+        { Id: 3, Title: 'Nursing Simulation Lab', Description0: 'Unpublished draft — hidden from the gallery.', Department: 'Nursing', IsPublished: false, Author: { Title: 'Demo Student' } }
+      ];
+      const scenes = [
+        { TourID: 1, SortOrder: 1, PhotoUrl: demoThumb('Campus Center Atrium', 215) },
+        { TourID: 1, SortOrder: 2, PhotoUrl: null },
+        { TourID: 1, SortOrder: 3, PhotoUrl: null },
+        { TourID: 2, SortOrder: 1, PhotoUrl: demoThumb('Healey Library Entrance', 280) },
+        { TourID: 2, SortOrder: 2, PhotoUrl: null },
+        { TourID: 3, SortOrder: 1, PhotoUrl: demoThumb('Simulation Lab', 150) }
+      ];
+      return { tours: tours.filter((t) => t.IsPublished), scenes };
+    }
+
+    main();
+  </script>
+</body>
+</html>

@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Virtual Tour – UMass Boston VEP</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    :root {
+      --bg: #111; --panel: rgba(0,0,0,0.55); --card: #181818; --border: #333; --border-strong: #444;
+      --text: #eee; --muted: #aaa; --accent: #6366f1; --accent-soft: rgba(99,102,241,0.5);
+      --warn: #fbbf24; --danger: #fca5a5;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%; margin: 0; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+    h1, h2 { margin: 0; }
+    a { color: #93c5fd; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .skip-link { position: absolute; left: 8px; top: -40px; z-index: 10001; }
+    .skip-link:focus { top: 8px; }
+
+    .btn {
+      appearance: none; border: 1px solid var(--border-strong); background: #1d1d1d; color: var(--text);
+      padding: 8px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600; font-size: 14px;
+      text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: background 0.15s;
+    }
+    .btn:hover { background: #262626; }
+    .btn:active, .btn[aria-current="true"], .btn[aria-expanded="true"] { background: var(--accent-soft); border-color: var(--accent); }
+    .badge {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 3px 8px; border-radius: 999px; border: 1px solid currentColor;
+    }
+    .badge.demo { color: #93c5fd; }
+    .badge.draft { color: var(--warn); }
+    .muted { color: var(--muted); font-size: 13px; }
+
+    /* Top bar */
+    .topbar {
+      display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+      background: #0b0b0b; border-bottom: 1px solid var(--border);
+    }
+    .tour-heading { min-width: 0; flex: 1; }
+    .tour-heading h1 { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Main layout */
+    .layout { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
+    .pano-wrap { position: relative; min-height: 0; }
+    #pano { position: absolute; inset: 0; }
+    .side { overflow-y: auto; border-left: 1px solid var(--border); padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+    .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 8px; }
+    .card h2.scene-title { font-size: 17px; text-transform: none; letter-spacing: 0; color: var(--text); }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .stack { display: flex; flex-direction: column; gap: 6px; }
+    .stack .btn { justify-content: flex-start; text-align: left; }
+
+    #desc-panel { margin-top: 10px; padding: 10px; background: #0f0f1a; border-left: 3px solid var(--accent); border-radius: 4px; line-height: 1.5; font-size: 14px; white-space: pre-wrap; }
+    #scene-audio { width: 100%; margin-top: 10px; }
+    #map { height: 220px; border-radius: 6px; background: #222; }
+    #scene-list { list-style: none; margin: 0; padding: 0; }
+    #scene-list li + li { margin-top: 6px; }
+    #scene-list .btn { width: 100%; }
+    .num { display: inline-grid; place-items: center; min-width: 22px; height: 22px; border-radius: 50%; background: #2a2a2a; font-size: 12px; }
+
+    /* Status overlay (loading / errors) */
+    .status {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5;
+      max-width: min(480px, 90%); background: var(--panel); border: 1px solid var(--border-strong);
+      padding: 16px 18px; border-radius: 8px; line-height: 1.5; text-align: center;
+    }
+    .status.error { border-color: rgba(239,68,68,0.5); color: var(--danger); }
+    .status[hidden] { display: none; }
+    #debug-readout {
+      position: absolute; left: 12px; bottom: 12px; z-index: 5; background: var(--panel);
+      padding: 8px 10px; border-radius: 6px; font: 13px ui-monospace, monospace;
+    }
+
+    /* Hotspots: keep Pannellum's arrow sprite, replace its tooltip with an escaped, focusable one */
+    .vep-hotspot { outline-offset: 4px; }
+    .vep-hs-tip {
+      position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+      white-space: nowrap; background: rgba(20,20,40,0.9); color: #fff; border: 1px solid rgba(255,255,255,0.2);
+      padding: 5px 10px; border-radius: 6px; font-size: 13px; font-weight: 600;
+      visibility: hidden; pointer-events: none;
+    }
+    .vep-hotspot:hover .vep-hs-tip, .vep-hotspot:focus .vep-hs-tip { visibility: visible; }
+
+    /* Map pins */
+    .vep-pin span {
+      display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+      background: #1d1d1d; color: #eee; border: 2px solid #eee; font: 700 12px system-ui, sans-serif;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+    .vep-pin.active span { background: var(--accent); border-color: #fff; transform: scale(1.15); }
+
+    @media (max-width: 800px) {
+      body { overflow: auto; display: block; }
+      .layout { grid-template-columns: 1fr; }
+      .pano-wrap { height: 60vh; }
+      .side { border-left: none; border-top: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link btn" href="#scene-panel">Skip to scene controls</a>
+
+  <header class="topbar">
+    <a id="back-link" class="btn" href="gallery.html" target="_top">&larr; All tours</a>
+    <div class="tour-heading">
+      <h1 id="tour-title">Loading tour&hellip;</h1>
+      <div id="tour-meta" class="muted"></div>
+    </div>
+    <span id="draft-badge" class="badge draft" hidden>Draft</span>
+    <span id="demo-badge" class="badge demo" hidden title="Not connected to SharePoint – showing sample data">Demo data</span>
+  </header>
+
+  <main class="layout">
+    <section class="pano-wrap" aria-label="360 degree panorama">
+      <div id="pano"></div>
+      <div id="status" class="status" role="status">Loading tour&hellip;</div>
+      <div id="debug-readout" hidden></div>
+    </section>
+
+    <aside id="scene-panel" class="side" tabindex="-1" aria-label="Scene controls">
+      <section class="card" aria-labelledby="scene-title">
+        <h2 id="scene-title" class="scene-title">&nbsp;</h2>
+        <div class="row" style="margin-top:10px">
+          <button id="desc-btn" class="btn" aria-expanded="false" aria-controls="desc-panel">Scene description</button>
+        </div>
+        <div id="desc-panel" hidden></div>
+        <audio id="scene-audio" controls preload="none" hidden aria-label="Audio description"></audio>
+      </section>
+
+      <section class="card" aria-labelledby="exits-heading">
+        <h2 id="exits-heading">Go to</h2>
+        <div id="exits" class="stack"></div>
+      </section>
+
+      <section class="card" aria-labelledby="map-heading">
+        <h2 id="map-heading">Map</h2>
+        <div id="map" role="region" aria-label="Map of tour scenes. Tab to a numbered pin and press Enter to jump to it."></div>
+      </section>
+
+      <section class="card" aria-labelledby="list-heading">
+        <h2 id="list-heading">All scenes</h2>
+        <ol id="scene-list"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <div id="announcer" class="sr-only" aria-live="polite"></div>
+
+  <script>
+    // ── Configuration (see Setup Guide, Part 5) ──────────────────────────────
+    const CFG = {
+      siteUrl:       'https://umassboston.sharepoint.com/sites/virtual-experience',
+      toursListName: 'VirtualTours',
+      scenesListName:'TourScenes',
+      connsListName: 'SceneConnections',
+      photosLibrary: '360Photos',
+      defaultLat:    42.3131,   // UMass Boston approximate center
+      defaultLng:   -71.0373
+    };
+
+    // ?demo forces sample data; it is also used automatically when this page is
+    // not served from the SharePoint host (e.g. local preview).
+    // ?debug shows the pitch/yaw of any click, for tuning HotspotPitch/HotspotYaw.
+    const params = new URLSearchParams(location.search);
+    const DEMO = params.has('demo') || location.hostname !== new URL(CFG.siteUrl).hostname;
+    const DEBUG = params.has('debug');
+
+    const $ = (id) => document.getElementById(id);
+
+    // ── SharePoint REST ──────────────────────────────────────────────────────
+    class SPError extends Error {
+      constructor(status, message) { super(message); this.status = status; }
+    }
+
+    async function spItems(listName, query) {
+      const list = listName.replace(/'/g, "''");
+      let url = `${CFG.siteUrl}/_api/web/lists/getbytitle('${list}')/items?${new URLSearchParams(query)}`;
+      const rows = [];
+      while (url) {
+        const res = await fetch(url, {
+          credentials: 'include',
+          headers: { Accept: 'application/json;odata=nometadata' }
+        });
+        if (!res.ok) {
+          throw new SPError(res.status, `SharePoint returned ${res.status} while reading "${listName}".`);
+        }
+        const data = await res.json();
+        rows.push(...data.value);
+        url = data['odata.nextLink'];
+      }
+      return rows;
+    }
+
+    async function fetchTour(tourId) {
+      if (DEMO) return demoTour(tourId);
+      const [tours, scenes, conns] = await Promise.all([
+        spItems(CFG.toursListName, {
+          $select: 'Id,Title,Description0,Department,IsPublished',
+          $filter: `Id eq ${tourId}`
+        }),
+        spItems(CFG.scenesListName, {
+          $select: 'Id,Title,PhotoUrl,Latitude,Longitude,AccessibilityDesc,AudioUrl,SortOrder',
+          $filter: `TourID eq ${tourId}`,
+          $orderby: 'SortOrder,Id',
+          $top: '500'
+        }),
+        spItems(CFG.connsListName, {
+          $select: 'Id,FromSceneID,ToSceneID,HotspotText,HotspotPitch,HotspotYaw',
+          $filter: `TourID eq ${tourId}`,
+          $top: '1000'
+        })
+      ]);
+      return { tour: tours[0], scenes, conns };
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    function getTourId() {
+      const find = (search) => {
+        for (const [k, v] of new URLSearchParams(search)) if (k.toLowerCase() === 'tourid') return v;
+        return null;
+      };
+      // When embedded on the "View Tour" SharePoint page the iframe URL is fixed,
+      // so fall back to the host page's query string (same origin, so readable).
+      let raw = find(location.search);
+      if (!raw) { try { raw = find(window.top.location.search); } catch { /* cross-origin parent */ } }
+      const n = Number(raw);
+      return Number.isInteger(n) && n > 0 ? n : null;
+    }
+
+    const num = (v) => (v === null || v === undefined || v === '' || isNaN(Number(v)) ? null : Number(v));
+
+    function resolvePhotoUrl(raw) {
+      if (!raw) return '';
+      raw = raw.trim();
+      if (raw.startsWith('data:')) return raw;
+      if (!raw.includes('/')) return `${CFG.siteUrl}/${CFG.photosLibrary}/${encodeURIComponent(raw)}`;
+      return new URL(raw, CFG.siteUrl).href;
+    }
+
+    // Sharing links (…/:i:/r/… or ?e=…) return an HTML page, not the image.
+    const looksLikeSharingLink = (url) => /\/:[a-z]:\//i.test(url) || /[?&]e=/.test(url);
+
+    function showStatus(message, isError = false) {
+      const el = $('status');
+      el.textContent = message;
+      el.classList.toggle('error', isError);
+      el.hidden = false;
+    }
+    const hideStatus = () => { $('status').hidden = true; };
+    const announce = (msg) => { $('announcer').textContent = msg; };
+
+    // ── Build tour model ─────────────────────────────────────────────────────
+    function buildModel({ tour, scenes, conns }) {
+      const model = scenes.map((s, i) => ({
+        id: 's' + s.Id,
+        index: i,
+        title: s.Title || `Scene ${i + 1}`,
+        photo: resolvePhotoUrl(s.PhotoUrl),
+        lat: num(s.Latitude),
+        lng: num(s.Longitude),
+        desc: (s.AccessibilityDesc || '').trim(),
+        audio: (s.AudioUrl || '').trim(),
+        exits: []
+      }));
+      const byId = Object.fromEntries(model.map((s) => [s.id, s]));
+      for (const c of conns) {
+        const from = byId['s' + c.FromSceneID];
+        const to = byId['s' + c.ToSceneID];
+        if (!from || !to || from === to) continue;
+        from.exits.push({
+          to: to.id,
+          text: (c.HotspotText || '').trim() || `Go to ${to.title}`,
+          pitch: num(c.HotspotPitch) ?? 0,
+          yaw: num(c.HotspotYaw) ?? 0
+        });
+      }
+      return { tour, scenes: model, byId };
+    }
+
+    // ── Viewer ───────────────────────────────────────────────────────────────
+    let viewer, model, map;
+    const markers = {};
+
+    function goTo(sceneId) {
+      if (viewer && viewer.getScene() !== sceneId) viewer.loadScene(sceneId);
+    }
+
+    function hotspotTooltip(div, args) {
+      div.classList.add('vep-hotspot');
+      div.tabIndex = 0;
+      div.setAttribute('role', 'button');
+      div.setAttribute('aria-label', args.text);
+      const tip = document.createElement('span');
+      tip.className = 'vep-hs-tip';
+      tip.textContent = args.text;
+      div.appendChild(tip);
+      div.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); goTo(args.sceneId); }
+      });
+    }
+
+    function initViewer() {
+      const scenes = {};
+      for (const s of model.scenes) {
+        scenes[s.id] = {
+          title: s.title,
+          type: 'equirectangular',
+          panorama: s.photo,
+          hotSpots: s.exits.map((e) => ({
+            pitch: e.pitch,
+            yaw: e.yaw,
+            type: 'scene',
+            sceneId: e.to,
+            createTooltipFunc: hotspotTooltip,
+            createTooltipArgs: { text: e.text, sceneId: e.to }
+          }))
+        };
+      }
+
+      viewer = pannellum.viewer('pano', {
+        default: {
+          firstScene: model.scenes[0].id,
+          autoLoad: true,
+          sceneFadeDuration: 800,
+          showFullscreenCtrl: true,
+          hotSpotDebug: DEBUG
+        },
+        scenes
+      });
+
+      viewer.on('scenechange', onSceneChange);
+      viewer.on('load', hideStatus);
+      viewer.on('error', () => {
+        const s = model.byId[viewer.getScene()];
+        let msg = `The 360° photo for "${s.title}" could not be loaded.`;
+        if (looksLikeSharingLink(s.photo)) msg += ' Its PhotoUrl looks like a sharing link — use the direct file URL instead (Setup Guide, Appendix A).';
+        else msg += ' Check that PhotoUrl in TourScenes points to the direct file URL and that the image is equirectangular JPEG/PNG.';
+        showStatus(msg, true);
+      });
+
+      const pano = $('pano');
+      pano.setAttribute('aria-label', '360 degree panorama. Use the arrow keys to look around and plus or minus to zoom.');
+
+      if (DEBUG) {
+        pano.addEventListener('mouseup', (e) => {
+          const [pitch, yaw] = viewer.mouseEventToCoords(e);
+          const out = $('debug-readout');
+          out.textContent = `HotspotPitch ${pitch.toFixed(1)} · HotspotYaw ${yaw.toFixed(1)}`;
+          out.hidden = false;
+        });
+      }
+
+      onSceneChange(model.scenes[0].id);
+    }
+
+    function onSceneChange(sceneId) {
+      const s = model.byId[sceneId];
+      if (!s) return;
+      hideStatus(); // Pannellum shows its own loading indicator; clear any previous error
+
+      $('scene-title').textContent = `${s.index + 1}. ${s.title}`;
+      $('desc-panel').textContent = s.desc || 'No description has been provided for this scene yet.';
+
+      const audio = $('scene-audio');
+      audio.pause();
+      if (s.audio) { audio.src = s.audio; audio.hidden = false; }
+      else { audio.removeAttribute('src'); audio.hidden = true; }
+
+      const exits = $('exits');
+      exits.replaceChildren();
+      if (!s.exits.length) {
+        const p = document.createElement('p');
+        p.className = 'muted';
+        p.style.margin = '0';
+        p.textContent = 'No connections from this scene.';
+        exits.appendChild(p);
+      }
+      for (const e of s.exits) {
+        const b = document.createElement('button');
+        b.className = 'btn';
+        b.textContent = `→ ${e.text}`;
+        b.addEventListener('click', () => goTo(e.to));
+        exits.appendChild(b);
+      }
+
+      for (const btn of $('scene-list').querySelectorAll('button')) {
+        btn.setAttribute('aria-current', String(btn.dataset.scene === sceneId));
+      }
+
+      for (const [id, m] of Object.entries(markers)) {
+        m.getElement()?.classList.toggle('active', id === sceneId);
+      }
+      if (markers[sceneId]) map.panTo(markers[sceneId].getLatLng());
+
+      const n = s.exits.length;
+      announce(`Now viewing scene ${s.index + 1} of ${model.scenes.length}: ${s.title}. ${n} ${n === 1 ? 'connection' : 'connections'} available.`);
+    }
+
+    function initSceneList() {
+      const list = $('scene-list');
+      for (const s of model.scenes) {
+        const li = document.createElement('li');
+        const b = document.createElement('button');
+        b.className = 'btn';
+        b.dataset.scene = s.id;
+        const n = document.createElement('span');
+        n.className = 'num';
+        n.textContent = s.index + 1;
+        b.append(n, document.createTextNode(s.title));
+        b.addEventListener('click', () => goTo(s.id));
+        li.appendChild(b);
+        list.appendChild(li);
+      }
+    }
+
+    function initMap() {
+      map = L.map('map', { scrollWheelZoom: false }).setView([CFG.defaultLat, CFG.defaultLng], 16);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(map);
+
+      const points = [];
+      for (const s of model.scenes) {
+        if (s.lat === null || s.lng === null) continue;
+        const m = L.marker([s.lat, s.lng], {
+          icon: L.divIcon({ className: 'vep-pin', html: `<span>${s.index + 1}</span>`, iconSize: [28, 28], iconAnchor: [14, 14] }),
+          title: s.title,
+          keyboard: true
+        }).addTo(map);
+        m.on('click', () => goTo(s.id));
+        m.getElement()?.setAttribute('aria-label', `Scene ${s.index + 1}: ${s.title}`);
+        markers[s.id] = m;
+        points.push([s.lat, s.lng]);
+      }
+      if (points.length > 1) map.fitBounds(points, { padding: [24, 24], maxZoom: 18 });
+      else if (points.length === 1) map.setView(points[0], 17);
+      else $('map-heading').textContent = 'Map (no scene locations set)';
+    }
+
+    // ── Startup ──────────────────────────────────────────────────────────────
+    async function main() {
+      if (DEMO) $('demo-badge').hidden = false;
+
+      const tourId = getTourId();
+      if (!tourId) {
+        $('tour-title').textContent = 'No tour selected';
+        showStatus('Open a tour from the Tour Gallery, or add ?tourId=<ID> to this page’s address.');
+        return;
+      }
+
+      let data;
+      try {
+        data = await fetchTour(tourId);
+      } catch (err) {
+        $('tour-title').textContent = 'Tour unavailable';
+        const auth = err.status === 401 || err.status === 403;
+        showStatus(auth
+          ? 'You don’t have access to this tour. Make sure you are signed in to your UMass Boston Microsoft 365 account in this browser.'
+          : `Could not load the tour. ${err.message}`, true);
+        console.error(err);
+        return;
+      }
+
+      if (!data.tour) {
+        $('tour-title').textContent = 'Tour not found';
+        showStatus(`Tour ${tourId} does not exist, or you do not have access to it.`, true);
+        return;
+      }
+
+      model = buildModel(data);
+      const t = model.tour;
+      $('tour-title').textContent = t.Title || `Tour ${tourId}`;
+      document.title = `${t.Title || 'Virtual Tour'} – UMass Boston VEP`;
+      $('tour-meta').textContent = [t.Department, t.Description0].filter(Boolean).join(' · ');
+      $('draft-badge').hidden = !!t.IsPublished;
+
+      if (!model.scenes.length) {
+        showStatus('This tour has no scenes yet. Add scenes in the VEP Upload Form.');
+        return;
+      }
+
+      initSceneList();
+      initMap();
+      initViewer();
+    }
+
+    $('desc-btn').addEventListener('click', (e) => {
+      const open = e.currentTarget.getAttribute('aria-expanded') !== 'true';
+      e.currentTarget.setAttribute('aria-expanded', String(open));
+      $('desc-panel').hidden = !open;
+    });
+
+    // ── Demo data (only used off-SharePoint or with ?demo) ───────────────────
+    function demoPanorama(label, hue, width = 2048) {
+      const w = width, h = width / 2;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      const sky = g.createLinearGradient(0, 0, 0, h / 2);
+      sky.addColorStop(0, `hsl(${hue} 60% 22%)`);
+      sky.addColorStop(1, `hsl(${hue} 55% 68%)`);
+      g.fillStyle = sky; g.fillRect(0, 0, w, h / 2);
+      const ground = g.createLinearGradient(0, h / 2, 0, h);
+      ground.addColorStop(0, `hsl(${hue + 40} 25% 34%)`);
+      ground.addColorStop(1, `hsl(${hue + 40} 20% 10%)`);
+      g.fillStyle = ground; g.fillRect(0, h / 2, w, h / 2);
+      g.strokeStyle = 'rgba(255,255,255,0.25)'; g.lineWidth = w / 1024;
+      g.fillStyle = '#fff'; g.textAlign = 'center';
+      g.font = `600 ${w / 72}px system-ui, sans-serif`;
+      for (let yaw = -180; yaw < 180; yaw += 30) {
+        const x = ((yaw + 180) / 360) * w;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+        g.fillText(`${yaw}°`, x + (yaw === -180 ? w / 64 : 0), h * 0.55);
+      }
+      g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+      g.font = `700 ${w / 32}px system-ui, sans-serif`;
+      g.fillText(label, w / 2, h * 0.43);
+      g.font = `${w / 85}px system-ui, sans-serif`;
+      g.fillText('Demo panorama — replace with a real 360° photo', w / 2, h * 0.47);
+      return c.toDataURL('image/jpeg', 0.85);
+    }
+
+    const DEMO_DATA = {
+      tours: [
+        { Id: 1, Title: 'Campus Center & HarborWalk', Description0: 'From the Campus Center atrium out to the HarborWalk overlooking Dorchester Bay.', Department: 'Environmental Science', IsPublished: true, Author: { Title: 'Demo Student' } },
+        { Id: 2, Title: 'Healey Library Walkthrough', Description0: 'A short walk from the library entrance into the reading room.', Department: 'History', IsPublished: true, Author: { Title: 'Demo Student' } },
+        { Id: 3, Title: 'Nursing Simulation Lab', Description0: 'Unpublished draft — hidden from the gallery.', Department: 'Nursing', IsPublished: false, Author: { Title: 'Demo Student' } }
+      ],
+      scenes: [
+        { Id: 11, TourID: 1, SortOrder: 1, hue: 215, Title: 'Campus Center Atrium', Latitude: 42.3133, Longitude: -71.0381, AccessibilityDesc: 'A tall, glass-walled atrium with a wide staircase on the left and seating areas along the windows. Doors to the outdoor terrace are ahead and to the right.' },
+        { Id: 12, TourID: 1, SortOrder: 2, hue: 190, Title: 'Campus Center Terrace', Latitude: 42.3129, Longitude: -71.0372, AccessibilityDesc: 'An open terrace with benches. The harbor is visible straight ahead; the atrium doors are behind you.' },
+        { Id: 13, TourID: 1, SortOrder: 3, hue: 30, Title: 'HarborWalk Overlook', Latitude: 42.3122, Longitude: -71.0356, AccessibilityDesc: 'A paved waterfront path with a railing along Dorchester Bay. The skyline of downtown Boston is to the north.' },
+        { Id: 21, TourID: 2, SortOrder: 1, hue: 280, Title: 'Healey Library Entrance', Latitude: 42.3140, Longitude: -71.0375, AccessibilityDesc: 'The main library entrance with a service desk to the right.' },
+        { Id: 22, TourID: 2, SortOrder: 2, hue: 320, Title: 'Reading Room', Latitude: 42.3142, Longitude: -71.0372, AccessibilityDesc: '' },
+        { Id: 31, TourID: 3, SortOrder: 1, hue: 150, Title: 'Simulation Lab', Latitude: 42.3150, Longitude: -71.0393, AccessibilityDesc: 'A simulated hospital room with two beds.' }
+      ],
+      conns: [
+        { TourID: 1, FromSceneID: 11, ToSceneID: 12, HotspotText: 'Out to the terrace', HotspotPitch: -5, HotspotYaw: 60 },
+        { TourID: 1, FromSceneID: 12, ToSceneID: 11, HotspotText: 'Back inside', HotspotPitch: -5, HotspotYaw: -120 },
+        { TourID: 1, FromSceneID: 12, ToSceneID: 13, HotspotText: 'Walk to the HarborWalk', HotspotPitch: -5, HotspotYaw: 30 },
+        { TourID: 1, FromSceneID: 13, ToSceneID: 12, HotspotText: 'Back to the terrace', HotspotPitch: -5, HotspotYaw: 180 },
+        { TourID: 2, FromSceneID: 21, ToSceneID: 22, HotspotText: 'Into the reading room', HotspotPitch: 0, HotspotYaw: 0 },
+        { TourID: 2, FromSceneID: 22, ToSceneID: 21, HotspotText: 'Back to the entrance', HotspotPitch: 0, HotspotYaw: 180 }
+      ]
+    };
+
+    function demoTour(tourId) {
+      return {
+        tour: DEMO_DATA.tours.find((t) => t.Id === tourId),
+        scenes: DEMO_DATA.scenes
+          .filter((s) => s.TourID === tourId)
+          .sort((a, b) => a.SortOrder - b.SortOrder)
+          .map((s) => ({ ...s, PhotoUrl: demoPanorama(s.Title, s.hue) })),
+        conns: DEMO_DATA.conns.filter((c) => c.TourID === tourId)
+      };
+    }
+
+    main();
+  </script>
+</body>
+</html>
