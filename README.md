@@ -6,6 +6,7 @@ write its lists through the SharePoint REST API, using the visitor's own Microso
 
 | Page | What it does |
 | --- | --- |
+| `index.html` | Sends visitors to the gallery (for hosts that open `index.html` at the site root). |
 | `gallery.html` | Lists published tours, with search and a department filter. |
 | `viewer.html?tourId=N` | Shows a tour in [Pannellum](https://pannellum.org/): scene links, info hotspots, map, descriptions. |
 | `editor.html?tourId=N` | Creates tours, uploads 360° photos as scenes, and places info hotspots by clicking the photo. |
