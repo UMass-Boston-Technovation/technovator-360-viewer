@@ -76,6 +76,7 @@
         <h1>Virtual Tour Gallery</h1>
         <div class="muted">UMass Boston Virtual Experience Platform · Technovator &amp; MakerSpace</div>
       </div>
+      <a id="editor-link" class="btn" target="_top">Create or edit a tour</a>
       <span id="demo-badge" class="badge" hidden title="Not connected to SharePoint – showing sample data">Demo data</span>
     </header>
 
@@ -99,7 +100,8 @@
       siteUrl:       'https://umassboston.sharepoint.com/sites/virtual-experience',
       toursListName: 'VirtualTours',
       scenesListName:'TourScenes',
-      viewerUrl:     'https://umassboston.sharepoint.com/sites/virtual-experience/VEPAssets/viewer.html'
+      viewerUrl:     'https://umassboston.sharepoint.com/sites/virtual-experience/VEPAssets/viewer.html',
+      editorUrl:     'https://umassboston.sharepoint.com/sites/virtual-experience/VEPAssets/editor.html'
     };
 
     // Choices of the VirtualTours "Department" column (Setup Guide, Part 3).
@@ -164,6 +166,13 @@
     function previewUrl(photoUrl) {
       if (!photoUrl || photoUrl.startsWith('data:')) return photoUrl;
       return `${CFG.siteUrl}/_layouts/15/getpreview.ashx?path=${encodeURIComponent(photoUrl)}`;
+    }
+
+    function editorLink() {
+      const url = DEMO ? new URL('editor.html', location.href) : new URL(CFG.editorUrl);
+      url.search = '';
+      if (DEMO && params.has('demo')) url.searchParams.set('demo', '');
+      return url.href;
     }
 
     function tourLink(id) {
@@ -287,6 +296,7 @@
 
     async function main() {
       if (DEMO) $('demo-badge').hidden = false;
+      $('editor-link').href = editorLink();
       for (const d of DEPARTMENTS) $('dept').add(new Option(d, d));
       $('search').addEventListener('input', render);
       $('dept').addEventListener('change', render);

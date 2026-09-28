@@ -64,6 +64,9 @@
     .stack { display: flex; flex-direction: column; gap: 6px; }
     .stack .btn { justify-content: flex-start; text-align: left; }
 
+    #info-panel { margin-top: 10px; padding: 10px; background: #0f0f1a; border-left: 3px solid var(--warn); border-radius: 4px; line-height: 1.5; font-size: 14px; }
+    #info-panel h3 { margin: 0 0 4px; font-size: 15px; }
+    #info-panel p { margin: 0; white-space: pre-wrap; }
     #desc-panel { margin-top: 10px; padding: 10px; background: #0f0f1a; border-left: 3px solid var(--accent); border-radius: 4px; line-height: 1.5; font-size: 14px; white-space: pre-wrap; }
     #scene-audio { width: 100%; margin-top: 10px; }
     #map { height: 220px; border-radius: 6px; background: #222; }
@@ -120,6 +123,7 @@
       <h1 id="tour-title">Loading tour&hellip;</h1>
       <div id="tour-meta" class="muted"></div>
     </div>
+    <a id="edit-link" class="btn" target="_top" hidden>Edit tour</a>
     <span id="draft-badge" class="badge draft" hidden>Draft</span>
     <span id="demo-badge" class="badge demo" hidden title="Not connected to SharePoint – showing sample data">Demo data</span>
   </header>
@@ -139,6 +143,12 @@
         </div>
         <div id="desc-panel" hidden></div>
         <audio id="scene-audio" controls preload="none" hidden aria-label="Audio description"></audio>
+      </section>
+
+      <section id="info-card" class="card" aria-labelledby="info-heading" hidden>
+        <h2 id="info-heading">Points of interest</h2>
+        <div id="info-list" class="stack"></div>
+        <div id="info-panel" hidden><h3 id="info-title"></h3><p id="info-text"></p></div>
       </section>
 
       <section class="card" aria-labelledby="exits-heading">
@@ -167,6 +177,7 @@
       toursListName: 'VirtualTours',
       scenesListName:'TourScenes',
       connsListName: 'SceneConnections',
+      hotspotsListName: 'SceneHotspots',
       photosLibrary: '360Photos',
       defaultLat:    42.3131,   // UMass Boston approximate center
       defaultLng:   -71.0373
@@ -207,7 +218,7 @@
 
     async function fetchTour(tourId) {
       if (DEMO) return demoTour(tourId);
-      const [tours, scenes, conns] = await Promise.all([
+      const [tours, scenes, conns, hotspots] = await Promise.all([
         spItems(CFG.toursListName, {
           $select: 'Id,Title,Description0,Department,IsPublished',
           $filter: `Id eq ${tourId}`
@@ -222,9 +233,15 @@
           $select: 'Id,FromSceneID,ToSceneID,HotspotText,HotspotPitch,HotspotYaw',
           $filter: `TourID eq ${tourId}`,
           $top: '1000'
-        })
+        }),
+        // Info hotspots are optional: sites set up before the editor existed have no such list.
+        spItems(CFG.hotspotsListName, {
+          $select: 'Id,SceneID,Title,InfoText,HotspotPitch,HotspotYaw',
+          $filter: `TourID eq ${tourId}`,
+          $top: '2000'
+        }).catch((err) => { if (err.status === 404) return []; throw err; })
       ]);
-      return { tour: tours[0], scenes, conns };
+      return { tour: tours[0], scenes, conns, hotspots };
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -264,7 +281,7 @@
     const announce = (msg) => { $('announcer').textContent = msg; };
 
     // ── Build tour model ─────────────────────────────────────────────────────
-    function buildModel({ tour, scenes, conns }) {
+    function buildModel({ tour, scenes, conns, hotspots = [] }) {
       const model = scenes.map((s, i) => ({
         id: 's' + s.Id,
         index: i,
@@ -274,7 +291,8 @@
         lng: num(s.Longitude),
         desc: (s.AccessibilityDesc || '').trim(),
         audio: (s.AudioUrl || '').trim(),
-        exits: []
+        exits: [],
+        info: []
       }));
       const byId = Object.fromEntries(model.map((s) => [s.id, s]));
       for (const c of conns) {
@@ -286,6 +304,17 @@
           text: (c.HotspotText || '').trim() || `Go to ${to.title}`,
           pitch: num(c.HotspotPitch) ?? 0,
           yaw: num(c.HotspotYaw) ?? 0
+        });
+      }
+      for (const h of hotspots) {
+        const s = byId['s' + h.SceneID];
+        if (!s) continue;
+        s.info.push({
+          id: 'i' + h.Id,
+          title: (h.Title || '').trim() || 'Point of interest',
+          text: (h.InfoText || '').trim(),
+          pitch: num(h.HotspotPitch) ?? 0,
+          yaw: num(h.HotspotYaw) ?? 0
         });
       }
       return { tour, scenes: model, byId };
@@ -313,6 +342,28 @@
       });
     }
 
+    function infoTooltip(div, info) {
+      div.classList.add('vep-hotspot');
+      div.tabIndex = 0;
+      div.setAttribute('role', 'button');
+      div.setAttribute('aria-label', `Point of interest: ${info.title}`);
+      const tip = document.createElement('span');
+      tip.className = 'vep-hs-tip';
+      tip.textContent = info.title;
+      div.appendChild(tip);
+      div.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); showInfo(info, false); }
+      });
+    }
+
+    function showInfo(info, turn) {
+      $('info-title').textContent = info.title;
+      $('info-text').textContent = info.text || 'No further information.';
+      $('info-panel').hidden = false;
+      if (turn) viewer.lookAt(info.pitch, info.yaw, undefined, 800);
+      announce(`${info.title}. ${info.text}`);
+    }
+
     function initViewer() {
       const scenes = {};
       for (const s of model.scenes) {
@@ -327,7 +378,15 @@
             sceneId: e.to,
             createTooltipFunc: hotspotTooltip,
             createTooltipArgs: { text: e.text, sceneId: e.to }
-          }))
+          })).concat(s.info.map((info) => ({
+            id: info.id,
+            pitch: info.pitch,
+            yaw: info.yaw,
+            type: 'info',
+            createTooltipFunc: infoTooltip,
+            createTooltipArgs: info,
+            clickHandlerFunc: () => showInfo(info, false)
+          })))
         };
       }
 
@@ -380,6 +439,16 @@
       if (s.audio) { audio.src = s.audio; audio.hidden = false; }
       else { audio.removeAttribute('src'); audio.hidden = true; }
 
+      $('info-card').hidden = !s.info.length;
+      $('info-panel').hidden = true;
+      $('info-list').replaceChildren(...s.info.map((info) => {
+        const b = document.createElement('button');
+        b.className = 'btn';
+        b.textContent = `ⓘ ${info.title}`;
+        b.addEventListener('click', () => showInfo(info, true));
+        return b;
+      }));
+
       const exits = $('exits');
       exits.replaceChildren();
       if (!s.exits.length) {
@@ -406,8 +475,9 @@
       }
       if (markers[sceneId]) map.panTo(markers[sceneId].getLatLng());
 
-      const n = s.exits.length;
-      announce(`Now viewing scene ${s.index + 1} of ${model.scenes.length}: ${s.title}. ${n} ${n === 1 ? 'connection' : 'connections'} available.`);
+      const n = s.exits.length, k = s.info.length;
+      announce(`Now viewing scene ${s.index + 1} of ${model.scenes.length}: ${s.title}. ${n} ${n === 1 ? 'connection' : 'connections'}` +
+        (k ? ` and ${k} ${k === 1 ? 'point' : 'points'} of interest` : '') + ' available.');
     }
 
     function initSceneList() {
@@ -488,6 +558,12 @@
       document.title = `${t.Title || 'Virtual Tour'} – UMass Boston VEP`;
       $('tour-meta').textContent = [t.Department, t.Description0].filter(Boolean).join(' · ');
       $('draft-badge').hidden = !!t.IsPublished;
+      const edit = new URL('editor.html', location.href);
+      edit.search = '';
+      edit.searchParams.set('tourId', tourId);
+      if (params.has('demo')) edit.searchParams.set('demo', '');
+      $('edit-link').href = edit.href;
+      $('edit-link').hidden = false;
 
       if (!model.scenes.length) {
         showStatus('This tour has no scenes yet. Add scenes in the VEP Upload Form.');
@@ -506,6 +582,7 @@
     });
 
     // ── Demo data (only used off-SharePoint or with ?demo) ───────────────────
+    // Keep in sync with DEMO_DATA in editor.html.
     function demoPanorama(label, hue, width = 2048) {
       const w = width, h = width / 2;
       const c = document.createElement('canvas');
@@ -556,6 +633,10 @@
         { TourID: 1, FromSceneID: 13, ToSceneID: 12, HotspotText: 'Back to the terrace', HotspotPitch: -5, HotspotYaw: 180 },
         { TourID: 2, FromSceneID: 21, ToSceneID: 22, HotspotText: 'Into the reading room', HotspotPitch: 0, HotspotYaw: 0 },
         { TourID: 2, FromSceneID: 22, ToSceneID: 21, HotspotText: 'Back to the entrance', HotspotPitch: 0, HotspotYaw: 180 }
+      ],
+      hotspots: [
+        { Id: 101, TourID: 1, SceneID: 11, Title: 'Main staircase', InfoText: 'The staircase connects all four floors of the Campus Center.', HotspotPitch: 5, HotspotYaw: -90 },
+        { Id: 102, TourID: 1, SceneID: 13, Title: 'Dorchester Bay', InfoText: 'The HarborWalk runs along the edge of Dorchester Bay, part of Boston Harbor.', HotspotPitch: 0, HotspotYaw: 0 }
       ]
     };
 
@@ -566,7 +647,8 @@
           .filter((s) => s.TourID === tourId)
           .sort((a, b) => a.SortOrder - b.SortOrder)
           .map((s) => ({ ...s, PhotoUrl: demoPanorama(s.Title, s.hue) })),
-        conns: DEMO_DATA.conns.filter((c) => c.TourID === tourId)
+        conns: DEMO_DATA.conns.filter((c) => c.TourID === tourId),
+        hotspots: DEMO_DATA.hotspots.filter((h) => h.TourID === tourId)
       };
     }
 

@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Tour Editor – UMass Boston VEP</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css" />
+  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+  <style>
+    :root {
+      --bg: #111; --panel: rgba(0,0,0,0.55); --card: #181818; --border: #333; --border-strong: #444;
+      --text: #eee; --muted: #aaa; --accent: #6366f1; --accent-soft: rgba(99,102,241,0.5);
+      --warn: #fbbf24; --danger: #fca5a5;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%; margin: 0; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+    h1, h2 { margin: 0; }
+    a { color: #93c5fd; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    [hidden] { display: none !important; }
+
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+    .btn {
+      appearance: none; border: 1px solid var(--border-strong); background: #1d1d1d; color: var(--text);
+      padding: 8px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600; font-size: 14px;
+      text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: background 0.15s;
+    }
+    .btn:hover { background: #262626; }
+    .btn:active, .btn[aria-current="true"], .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); }
+    .btn.danger { color: var(--danger); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .badge {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 3px 8px; border-radius: 999px; border: 1px solid currentColor; color: #93c5fd;
+    }
+    .muted { color: var(--muted); font-size: 13px; }
+
+    .topbar {
+      display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+      background: #0b0b0b; border-bottom: 1px solid var(--border);
+    }
+    .topbar h1 { font-size: 17px; flex: 1; }
+
+    .layout { display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
+    .pano-wrap { position: relative; min-height: 0; }
+    #pano { position: absolute; inset: 0; }
+    #pano.placing, #pano.placing .pnlm-dragfix, #pano.placing canvas { cursor: crosshair !important; }
+    .side { overflow-y: auto; border-left: 1px solid var(--border); padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+    .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 8px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .stack { display: flex; flex-direction: column; gap: 8px; }
+    .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    .list .btn { width: 100%; justify-content: flex-start; text-align: left; }
+    .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    .check { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+    input[type=text], input[type=file], select, textarea {
+      font: inherit; font-size: 14px; border: 1px solid var(--border); background: #222; color: var(--text);
+      padding: 8px; border-radius: 6px; width: 100%;
+    }
+    textarea { min-height: 110px; resize: vertical; }
+    form.sub { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+
+    .status {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5;
+      max-width: min(480px, 90%); background: var(--panel); border: 1px solid var(--border-strong);
+      padding: 16px 18px; border-radius: 8px; line-height: 1.5; text-align: center;
+    }
+    .status.error { border-color: rgba(239,68,68,0.5); color: var(--danger); }
+    .hint {
+      position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 5;
+      background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 600;
+    }
+    .toast {
+      position: absolute; left: 12px; bottom: 12px; z-index: 5; background: var(--panel);
+      border: 1px solid var(--border-strong); padding: 8px 12px; border-radius: 6px; font-size: 14px;
+    }
+    .toast.error { color: var(--danger); border-color: rgba(239,68,68,0.5); }
+
+    /* Info hotspots: Pannellum's "i" sprite with an escaped tooltip; the selected/unsaved one is highlighted */
+    .vep-hotspot { outline-offset: 4px; }
+    .vep-hotspot.selected { filter: drop-shadow(0 0 6px var(--warn)) drop-shadow(0 0 2px var(--warn)); }
+    .vep-hs-tip {
+      position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+      white-space: nowrap; background: rgba(20,20,40,0.9); color: #fff; border: 1px solid rgba(255,255,255,0.2);
+      padding: 5px 10px; border-radius: 6px; font-size: 13px; font-weight: 600;
+      visibility: hidden; pointer-events: none;
+    }
+    .vep-hotspot:hover .vep-hs-tip, .vep-hotspot:focus .vep-hs-tip, .vep-hotspot.selected .vep-hs-tip { visibility: visible; }
+
+    @media (max-width: 800px) {
+      body { overflow: auto; display: block; }
+      .layout { grid-template-columns: 1fr; }
+      .pano-wrap { height: 60vh; }
+      .side { border-left: none; border-top: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a id="back-link" class="btn" href="gallery.html" target="_top">&larr; All tours</a>
+    <h1>Tour editor</h1>
+    <a id="preview-link" class="btn" target="_top" hidden>Open in viewer</a>
+    <span id="demo-badge" class="badge" hidden title="Not connected to SharePoint – changes are kept only until you reload">Demo data</span>
+  </header>
+
+  <main class="layout">
+    <section class="pano-wrap" aria-label="360 degree panorama">
+      <div id="pano"></div>
+      <div id="status" class="status" role="status">Loading&hellip;</div>
+      <div id="hint" class="hint" hidden></div>
+      <div id="toast" class="toast" role="status" hidden></div>
+    </section>
+
+    <aside class="side" aria-label="Editor controls">
+      <!-- Tour -->
+      <section class="card" aria-labelledby="tour-heading">
+        <h2 id="tour-heading">Tour</h2>
+        <div class="stack">
+          <label class="field">Tour to edit
+            <select id="tour-select"></select>
+          </label>
+          <label class="check" id="published-row" hidden>
+            <input id="published" type="checkbox" /> Published (shown in the gallery)
+          </label>
+        </div>
+        <form id="tour-form" class="sub stack" hidden>
+          <label class="field">Tour name
+            <input id="tour-title" type="text" required maxlength="255" />
+          </label>
+          <label class="field">Department
+            <select id="tour-dept"></select>
+          </label>
+          <label class="field">Description
+            <textarea id="tour-desc" rows="3"></textarea>
+          </label>
+          <div class="row"><button class="btn primary" type="submit">Create tour</button></div>
+        </form>
+      </section>
+
+      <!-- Scenes -->
+      <section class="card" id="scenes-card" aria-labelledby="scenes-heading" hidden>
+        <h2 id="scenes-heading">Scenes</h2>
+        <ol id="scene-list" class="list"></ol>
+        <p id="no-scenes" class="muted" hidden>No scenes yet. Upload a 360° photo to start.</p>
+        <form id="scene-form" class="sub stack">
+          <label class="field">New scene name
+            <input id="scene-title" type="text" required maxlength="255" />
+          </label>
+          <label class="field">360° photo (equirectangular JPG or PNG)
+            <input id="scene-file" type="file" accept="image/jpeg,image/png" required />
+          </label>
+          <p id="scene-file-note" class="muted" hidden></p>
+          <div class="row"><button id="scene-submit" class="btn primary" type="submit">Upload scene</button></div>
+        </form>
+      </section>
+
+      <!-- Hotspots -->
+      <section class="card" id="hotspots-card" aria-labelledby="hotspots-heading" hidden>
+        <h2 id="hotspots-heading">Info hotspots</h2>
+        <div class="row" style="margin-bottom:10px">
+          <button id="add-hotspot" class="btn" type="button" aria-pressed="false">+ Add hotspot</button>
+        </div>
+        <ul id="hotspot-list" class="list"></ul>
+        <p id="no-hotspots" class="muted" hidden>No hotspots in this scene yet.</p>
+
+        <form id="hs-form" class="sub stack" hidden>
+          <label class="field">Title
+            <input id="hs-title" type="text" required maxlength="255" />
+          </label>
+          <label class="field">Information
+            <textarea id="hs-text"></textarea>
+          </label>
+          <div id="hs-pos" class="muted"></div>
+          <div class="row">
+            <button class="btn primary" type="submit">Save</button>
+            <button id="hs-move" class="btn" type="button" aria-pressed="false">Move</button>
+            <button id="hs-cancel" class="btn" type="button">Cancel</button>
+            <button id="hs-delete" class="btn danger" type="button">Delete</button>
+          </div>
+        </form>
+      </section>
+    </aside>
+  </main>
+
+  <div id="announcer" class="sr-only" aria-live="polite"></div>
+
+  <script>
+    // ── Configuration (keep in sync with viewer.html and gallery.html) ──────
+    const CFG = {
+      siteUrl:         'https://umassboston.sharepoint.com/sites/virtual-experience',
+      toursListName:   'VirtualTours',
+      scenesListName:  'TourScenes',
+      hotspotsListName:'SceneHotspots',
+      photosLibrary:   '360Photos'
+    };
+
+    const DEPARTMENTS = ['Architecture', 'Biology', 'Environmental Science', 'History', 'Nursing', 'Other'];
+
+    // Same rule as the viewer: sample data (kept in memory only) off SharePoint or with ?demo.
+    const params = new URLSearchParams(location.search);
+    const DEMO = params.has('demo') || location.hostname !== new URL(CFG.siteUrl).hostname;
+
+    const $ = (id) => document.getElementById(id);
+    const JSON_TYPE = 'application/json;odata=nometadata';
+
+    // ── SharePoint REST ──────────────────────────────────────────────────────
+    class SPError extends Error {
+      constructor(status, message) { super(message); this.status = status; }
+    }
+
+    const listUrl = (listName) => `${CFG.siteUrl}/_api/web/lists/getbytitle('${listName.replace(/'/g, "''")}')/items`;
+
+    async function spItems(listName, query) {
+      let url = `${listUrl(listName)}?${new URLSearchParams(query)}`;
+      const rows = [];
+      while (url) {
+        const res = await fetch(url, { credentials: 'include', headers: { Accept: JSON_TYPE } });
+        if (!res.ok) {
+          throw new SPError(res.status, `SharePoint returned ${res.status} while reading "${listName}".`);
+        }
+        const data = await res.json();
+        rows.push(...data.value);
+        url = data['odata.nextLink'];
+      }
+      return rows;
+    }
+
+    // Every write needs a request digest; SharePoint issues one per session for ~30 minutes.
+    let digest = null;
+    async function requestDigest() {
+      if (digest && digest.expires > Date.now()) return digest.value;
+      const res = await fetch(`${CFG.siteUrl}/_api/contextinfo`, {
+        method: 'POST', credentials: 'include', headers: { Accept: JSON_TYPE }
+      });
+      if (!res.ok) throw new SPError(res.status, `SharePoint returned ${res.status} while preparing to save.`);
+      const data = await res.json();
+      digest = { value: data.FormDigestValue, expires: Date.now() + (data.FormDigestTimeoutSeconds - 60) * 1000 };
+      return digest.value;
+    }
+
+    async function spWrite(url, body, headers, what) {
+      const res = await fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Accept: JSON_TYPE, 'X-RequestDigest': await requestDigest(), ...headers },
+        body
+      });
+      if (!res.ok) throw new SPError(res.status, `SharePoint returned ${res.status} while ${what}.`);
+      const text = await res.text(); // MERGE and DELETE reply with an empty body
+      return text ? JSON.parse(text) : null;
+    }
+
+    const spStore = {
+      list: (listName, query) => spItems(listName, query),
+      create: (listName, fields) =>
+        spWrite(listUrl(listName), JSON.stringify(fields), { 'Content-Type': JSON_TYPE }, `saving to "${listName}"`),
+      update: (listName, id, fields) =>
+        spWrite(`${listUrl(listName)}(${id})`, JSON.stringify(fields),
+          { 'Content-Type': JSON_TYPE, 'IF-MATCH': '*', 'X-HTTP-Method': 'MERGE' }, `updating "${listName}"`),
+      remove: (listName, id) =>
+        spWrite(`${listUrl(listName)}(${id})`, undefined,
+          { 'IF-MATCH': '*', 'X-HTTP-Method': 'DELETE' }, `deleting from "${listName}"`),
+      // Uploads into the photos library and returns the value to store in TourScenes.PhotoUrl.
+      async upload(file) {
+        const safe = file.name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+/, '') || 'photo.jpg';
+        const name = `${Date.now()}-${safe}`;
+        const folder = `${new URL(CFG.siteUrl).pathname}/${CFG.photosLibrary}`.replace(/'/g, "''");
+        const url = `${CFG.siteUrl}/_api/web/GetFolderByServerRelativeUrl('${folder}')/Files/add(url='${name}',overwrite=false)`;
+        const f = await spWrite(url, file, {}, 'uploading the photo');
+        return f.ServerRelativeUrl;
+      }
+    };
+
+    // ── Demo store: same interface, kept in memory ───────────────────────────
+    function demoStore() {
+      const data = {
+        [CFG.toursListName]: DEMO_DATA.tours.map((t) => ({ ...t })),
+        [CFG.scenesListName]: DEMO_DATA.scenes.map(({ hue, ...s }) => ({ ...s, PhotoUrl: demoPanorama(s.Title, hue) })),
+        [CFG.hotspotsListName]: DEMO_DATA.hotspots.map((h) => ({ ...h }))
+      };
+      let nextId = 1000;
+      const pause = () => new Promise((r) => setTimeout(r, 150));
+      return {
+        async list(listName, query) {
+          await pause();
+          const m = /TourID eq (\d+)/.exec(query.$filter || '');
+          return data[listName].filter((r) => !m || r.TourID === Number(m[1])).map((r) => ({ ...r }));
+        },
+        async create(listName, fields) {
+          await pause();
+          const row = { ...fields, Id: nextId++ };
+          data[listName].push(row);
+          return { ...row };
+        },
+        async update(listName, id, fields) {
+          await pause();
+          Object.assign(data[listName].find((r) => r.Id === id), fields);
+          return null;
+        },
+        async remove(listName, id) {
+          await pause();
+          data[listName] = data[listName].filter((r) => r.Id !== id);
+          return null;
+        },
+        async upload(file) { await pause(); return URL.createObjectURL(file); }
+      };
+    }
+
+    // ── State ────────────────────────────────────────────────────────────────
+    let store;
+    let tours = [];
+    let tour = null;          // selected VirtualTours row
+    let scenes = [];          // TourScenes rows of the tour
+    let hotspots = [];        // SceneHotspots rows of the tour
+    let scene = null;         // selected scene row
+    let draft = null;         // hotspot being edited: { Id|null, Title, InfoText, HotspotPitch, HotspotYaw }
+    let placing = null;       // null | 'new' | 'move'
+    let viewer = null, loaded = false;
+    let shownIds = [];        // Pannellum hotspot ids currently rendered
+    let busy = false;
+
+    const round1 = (n) => Math.round(n * 10) / 10;
+    const num = (v) => (v === null || v === undefined || v === '' || isNaN(Number(v)) ? 0 : Number(v));
+    const announce = (msg) => { $('announcer').textContent = msg; };
+
+    function resolvePhotoUrl(raw) {
+      if (!raw) return '';
+      raw = raw.trim();
+      if (raw.startsWith('data:') || raw.startsWith('blob:')) return raw;
+      if (!raw.includes('/')) return `${CFG.siteUrl}/${CFG.photosLibrary}/${encodeURIComponent(raw)}`;
+      return new URL(raw, CFG.siteUrl).href;
+    }
+
+    function showStatus(message, isError = false) {
+      const el = $('status');
+      el.textContent = message;
+      el.classList.toggle('error', isError);
+      el.hidden = false;
+    }
+    const hideStatus = () => { $('status').hidden = true; };
+
+    let toastTimer;
+    function toast(message, isError = false) {
+      const el = $('toast');
+      el.textContent = message;
+      el.classList.toggle('error', isError);
+      el.hidden = false;
+      clearTimeout(toastTimer);
+      if (!isError) toastTimer = setTimeout(() => { el.hidden = true; }, 3000);
+      announce(message);
+    }
+
+    function describeError(err) {
+      if (err.status === 401 || err.status === 403) {
+        return 'SharePoint refused the change. You need edit access to the Virtual Experience site, and must be signed in to your UMass Boston Microsoft 365 account in this browser.';
+      }
+      if (err.status === 404) return `${err.message} Check that the list or library exists (see README).`;
+      return err.message || String(err);
+    }
+
+    // Runs a save, blocking double submits and reporting failures without losing the form.
+    async function saving(label, fn) {
+      if (busy) return false;
+      busy = true;
+      toast(`${label}…`);
+      try {
+        await fn();
+        return true;
+      } catch (err) {
+        console.error(err);
+        toast(describeError(err), true);
+        return false;
+      } finally {
+        busy = false;
+      }
+    }
+
+    // ── Tours ────────────────────────────────────────────────────────────────
+    const NEW_TOUR = 'new';
+
+    function renderTourSelect(selectedId) {
+      const sel = $('tour-select');
+      sel.replaceChildren(new Option('Choose a tour…', ''), new Option('+ New tour', NEW_TOUR));
+      for (const t of tours) {
+        sel.add(new Option(`${t.Title || `Tour ${t.Id}`}${t.IsPublished ? '' : ' (draft)'}`, t.Id));
+      }
+      sel.value = selectedId ? String(selectedId) : '';
+    }
+
+    async function selectTour(id) {
+      tour = tours.find((t) => t.Id === id) || null;
+      scene = null;
+      closeHotspotForm();
+      $('tour-form').hidden = true;
+      $('scenes-card').hidden = !tour;
+      $('published-row').hidden = !tour;
+      $('hotspots-card').hidden = true;
+      $('preview-link').hidden = !tour;
+      destroyViewer();
+
+      const url = new URL(location.href);
+      if (tour) url.searchParams.set('tourId', tour.Id); else url.searchParams.delete('tourId');
+      history.replaceState(null, '', url);
+
+      if (!tour) { showStatus('Choose a tour, or create a new one, to start editing.'); return; }
+
+      $('published').checked = !!tour.IsPublished;
+      const preview = new URL('viewer.html', location.href);
+      preview.search = '';
+      preview.searchParams.set('tourId', tour.Id);
+      if (params.has('demo')) preview.searchParams.set('demo', '');
+      $('preview-link').href = preview.href;
+
+      showStatus('Loading scenes…');
+      try {
+        [scenes, hotspots] = await Promise.all([
+          store.list(CFG.scenesListName, {
+            $select: 'Id,Title,PhotoUrl,SortOrder,TourID',
+            $filter: `TourID eq ${tour.Id}`,
+            $orderby: 'SortOrder,Id',
+            $top: '500'
+          }),
+          store.list(CFG.hotspotsListName, {
+            $select: 'Id,Title,InfoText,SceneID,TourID,HotspotPitch,HotspotYaw',
+            $filter: `TourID eq ${tour.Id}`,
+            $top: '2000'
+          })
+        ]);
+      } catch (err) {
+        console.error(err);
+        showStatus(`Could not load this tour. ${describeError(err)}`, true);
+        return;
+      }
+      renderScenes();
+      if (scenes.length) selectScene(scenes[0].Id);
+      else showStatus('This tour has no scenes yet. Upload a 360° photo in the Scenes panel.');
+    }
+
+    $('tour-select').addEventListener('change', (e) => {
+      if (e.target.value === NEW_TOUR) {
+        selectTour(null);
+        $('tour-form').hidden = false;
+        $('tour-title').focus();
+        showStatus('Name your new tour in the panel on the right.');
+      } else {
+        selectTour(Number(e.target.value) || null);
+      }
+    });
+
+    $('tour-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fields = {
+        Title: $('tour-title').value.trim(),
+        Department: $('tour-dept').value,
+        Description0: $('tour-desc').value.trim(),
+        IsPublished: false
+      };
+      if (!fields.Title) return;
+      let created;
+      const ok = await saving('Creating tour', async () => { created = await store.create(CFG.toursListName, fields); });
+      if (!ok) return;
+      tours.push({ ...fields, ...created });
+      e.target.reset();
+      renderTourSelect(created.Id);
+      await selectTour(created.Id);
+      toast(`Created "${fields.Title}". Upload its first 360° photo.`);
+      $('scene-title').focus();
+    });
+
+    $('published').addEventListener('change', async (e) => {
+      const value = e.target.checked;
+      const ok = await saving(value ? 'Publishing' : 'Unpublishing', () =>
+        store.update(CFG.toursListName, tour.Id, { IsPublished: value }));
+      if (!ok) { e.target.checked = !value; return; }
+      tour.IsPublished = value;
+      renderTourSelect(tour.Id);
+      toast(value ? 'Tour published. It now appears in the gallery.' : 'Tour is now a draft.');
+    });
+
+    // ── Scenes ───────────────────────────────────────────────────────────────
+    function renderScenes() {
+      const list = $('scene-list');
+      list.replaceChildren();
+      scenes.forEach((s, i) => {
+        const li = document.createElement('li');
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn';
+        b.setAttribute('aria-current', String(scene?.Id === s.Id));
+        const count = hotspots.filter((h) => h.SceneID === s.Id).length;
+        b.textContent = `${i + 1}. ${s.Title || `Scene ${i + 1}`} (${count} ${count === 1 ? 'hotspot' : 'hotspots'})`;
+        b.addEventListener('click', () => selectScene(s.Id));
+        li.appendChild(b);
+        list.appendChild(li);
+      });
+      $('no-scenes').hidden = scenes.length > 0;
+    }
+
+    function selectScene(id) {
+      scene = scenes.find((s) => s.Id === id) || null;
+      closeHotspotForm();
+      renderScenes();
+      $('hotspots-card').hidden = !scene;
+      if (!scene) return;
+      renderHotspotList();
+      loadPanorama(resolvePhotoUrl(scene.PhotoUrl), scene.Title);
+    }
+
+    let previewUrl = null;
+    $('scene-file').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      const note = $('scene-file-note');
+      note.hidden = true;
+      if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+      if (!file) return;
+      if (!$('scene-title').value.trim()) $('scene-title').value = file.name.replace(/\.[^.]+$/, '');
+
+      // Preview straight away, before anything is uploaded.
+      previewUrl = URL.createObjectURL(file);
+      scene = null;
+      closeHotspotForm();
+      renderScenes();
+      $('hotspots-card').hidden = true;
+      loadPanorama(previewUrl, 'Preview');
+
+      const img = new Image();
+      img.onload = () => {
+        const ratio = img.naturalWidth / img.naturalHeight;
+        const notes = [`${img.naturalWidth} × ${img.naturalHeight} px, ${(file.size / 1048576).toFixed(1)} MB.`];
+        if (Math.abs(ratio - 2) > 0.05) notes.push('This does not look like a full 360° photo (it should be twice as wide as it is tall), so it may appear stretched.');
+        if (img.naturalWidth > 8192) notes.push('Photos wider than 8192 px may not open on phones and older laptops.');
+        note.textContent = notes.join(' ');
+        note.hidden = false;
+      };
+      img.src = previewUrl;
+    });
+
+    $('scene-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const file = $('scene-file').files[0];
+      const title = $('scene-title').value.trim();
+      if (!file || !title) return;
+      const sortOrder = scenes.reduce((max, s) => Math.max(max, num(s.SortOrder)), 0) + 1;
+      let created;
+      const ok = await saving('Uploading photo', async () => {
+        const photoUrl = await store.upload(file);
+        toast('Saving scene…');
+        const fields = { Title: title, TourID: tour.Id, PhotoUrl: photoUrl, SortOrder: sortOrder };
+        created = { ...fields, ...(await store.create(CFG.scenesListName, fields)) };
+      });
+      if (!ok) return;
+      scenes.push(created);
+      e.target.reset();
+      $('scene-file-note').hidden = true;
+      selectScene(created.Id);
+      toast(`Scene "${title}" saved. Click "Add hotspot" to mark a spot in the photo.`);
+    });
+
+    // ── Viewer ───────────────────────────────────────────────────────────────
+    function destroyViewer() {
+      if (viewer) { viewer.destroy(); viewer = null; }
+      loaded = false;
+      shownIds = [];
+    }
+
+    function loadPanorama(url, title) {
+      destroyViewer();
+      showStatus(`Loading "${title}"…`);
+      viewer = pannellum.viewer('pano', {
+        type: 'equirectangular',
+        panorama: url,
+        autoLoad: true,
+        showFullscreenCtrl: true,
+        hotSpots: []
+      });
+      viewer.on('load', () => {
+        loaded = true;
+        hideStatus();
+        renderHotspots();
+      });
+      viewer.on('error', (msg) => {
+        showStatus(`This 360° photo could not be displayed. ${msg || ''} Make sure it is an equirectangular JPG or PNG.`, true);
+      });
+      $('pano').setAttribute('aria-label', `360 degree panorama: ${title}. Use the arrow keys to look around and plus or minus to zoom.`);
+    }
+
+    function hotspotTooltip(div, args) {
+      div.classList.add('vep-hotspot');
+      div.classList.toggle('selected', args.selected);
+      div.tabIndex = 0;
+      div.setAttribute('role', 'button');
+      div.setAttribute('aria-label', `Edit hotspot: ${args.title}`);
+      const tip = document.createElement('span');
+      tip.className = 'vep-hs-tip';
+      tip.textContent = args.title;
+      div.appendChild(tip);
+      div.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); args.open(); }
+      });
+    }
+
+    function renderHotspots() {
+      if (!viewer || !loaded) return; // the viewer's load handler renders them
+      for (const id of shownIds) viewer.removeHotSpot(id);
+      shownIds = [];
+      if (!scene) return;
+
+      const rows = hotspots.filter((h) => h.SceneID === scene.Id && h.Id !== draft?.Id);
+      if (draft && draft.HotspotPitch !== null) rows.push(draft);
+      for (const h of rows) {
+        const id = h === draft ? 'draft' : `h${h.Id}`;
+        viewer.addHotSpot({
+          id,
+          pitch: num(h.HotspotPitch),
+          yaw: num(h.HotspotYaw),
+          type: 'info',
+          createTooltipFunc: hotspotTooltip,
+          createTooltipArgs: {
+            title: h.Title || 'New hotspot',
+            selected: h === draft,
+            open: () => { if (h !== draft) openHotspotForm(h); }
+          },
+          clickHandlerFunc: (e) => { e.stopPropagation(); if (h !== draft) openHotspotForm(h); }
+        });
+        shownIds.push(id);
+      }
+    }
+
+    // A click (not a drag) on the photo places or moves the hotspot being edited.
+    let downAt = null;
+    $('pano').addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY, id: e.pointerId }; });
+    $('pano').addEventListener('pointerup', (e) => {
+      const start = downAt;
+      downAt = null;
+      if (!placing || !viewer || !loaded || !start || start.id !== e.pointerId) return;
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 6) return;
+      if (e.target.closest('.pnlm-hotspot-base, .pnlm-controls-container, .pnlm-about-msg')) return;
+
+      const [pitch, yaw] = viewer.mouseEventToCoords(e);
+      placeAt(pitch, yaw);
+    });
+
+    function placeAt(pitch, yaw) {
+      if (placing === 'new') {
+        draft = { Id: null, Title: '', InfoText: '', HotspotPitch: round1(pitch), HotspotYaw: round1(yaw) };
+        showHotspotForm();
+      } else {
+        draft.HotspotPitch = round1(pitch);
+        draft.HotspotYaw = round1(yaw);
+        updatePosText();
+      }
+      setPlacing(null);
+      renderHotspots();
+      $('hs-title').focus();
+    }
+
+    function setPlacing(mode) {
+      placing = mode;
+      $('pano').classList.toggle('placing', !!mode);
+      $('add-hotspot').setAttribute('aria-pressed', String(mode === 'new'));
+      $('hs-move').setAttribute('aria-pressed', String(mode === 'move'));
+      const hint = $('hint');
+      hint.hidden = !mode;
+      if (mode) {
+        hint.textContent = mode === 'new'
+          ? 'Click the spot in the photo for the new hotspot, or press Enter for the centre of the view (Esc to cancel)'
+          : 'Click the new position for this hotspot, or press Enter for the centre of the view (Esc to cancel)';
+        announce(hint.textContent);
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (!placing) return;
+      if (e.key === 'Escape') setPlacing(null);
+      // Keyboard alternative to clicking: aim with the arrow keys, then press Enter.
+      else if (e.key === 'Enter' && loaded && !e.target.closest('input, textarea, select')) {
+        e.preventDefault();
+        placeAt(viewer.getPitch(), viewer.getYaw());
+      }
+    });
+
+    // ── Hotspot list & form ──────────────────────────────────────────────────
+    function renderHotspotList() {
+      const list = $('hotspot-list');
+      list.replaceChildren();
+      const rows = scene ? hotspots.filter((h) => h.SceneID === scene.Id) : [];
+      for (const h of rows) {
+        const li = document.createElement('li');
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn';
+        b.setAttribute('aria-current', String(draft?.Id === h.Id));
+        b.textContent = `ⓘ ${h.Title || 'Untitled'}`;
+        b.addEventListener('click', () => openHotspotForm(h));
+        li.appendChild(b);
+        list.appendChild(li);
+      }
+      $('no-hotspots').hidden = rows.length > 0;
+    }
+
+    function updatePosText() {
+      $('hs-pos').textContent = `Position: pitch ${draft.HotspotPitch}°, yaw ${draft.HotspotYaw}°`;
+    }
+
+    function showHotspotForm() {
+      $('hs-title').value = draft.Title || '';
+      $('hs-text').value = draft.InfoText || '';
+      $('hs-delete').hidden = draft.Id === null;
+      updatePosText();
+      $('hs-form').hidden = false;
+      renderHotspotList();
+    }
+
+    function openHotspotForm(h) {
+      setPlacing(null);
+      draft = { ...h };
+      showHotspotForm();
+      renderHotspots();
+      if (viewer && loaded) viewer.lookAt(num(h.HotspotPitch), num(h.HotspotYaw), undefined, 600);
+      $('hs-title').focus();
+    }
+
+    function closeHotspotForm() {
+      draft = null;
+      setPlacing(null);
+      $('hs-form').hidden = true;
+      renderHotspots();
+      renderHotspotList();
+    }
+
+    $('add-hotspot').addEventListener('click', () => {
+      if (placing === 'new') { setPlacing(null); return; }
+      closeHotspotForm();
+      setPlacing('new');
+    });
+    $('hs-move').addEventListener('click', () => setPlacing(placing === 'move' ? null : 'move'));
+    $('hs-cancel').addEventListener('click', closeHotspotForm);
+
+    $('hs-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fields = {
+        Title: $('hs-title').value.trim(),
+        InfoText: $('hs-text').value.trim(),
+        HotspotPitch: draft.HotspotPitch,
+        HotspotYaw: draft.HotspotYaw
+      };
+      if (!fields.Title) return;
+      const editing = draft;
+      const ok = await saving('Saving hotspot', async () => {
+        if (editing.Id === null) {
+          const all = { ...fields, TourID: tour.Id, SceneID: scene.Id };
+          hotspots.push({ ...all, ...(await store.create(CFG.hotspotsListName, all)) });
+        } else {
+          await store.update(CFG.hotspotsListName, editing.Id, fields);
+          Object.assign(hotspots.find((h) => h.Id === editing.Id), fields);
+        }
+      });
+      if (!ok) return;
+      closeHotspotForm();
+      renderScenes();
+      toast(`Saved "${fields.Title}".`);
+    });
+
+    $('hs-delete').addEventListener('click', async () => {
+      if (!draft || draft.Id === null || !confirm(`Delete the hotspot "${draft.Title}"?`)) return;
+      const id = draft.Id;
+      const ok = await saving('Deleting hotspot', () => store.remove(CFG.hotspotsListName, id));
+      if (!ok) return;
+      hotspots = hotspots.filter((h) => h.Id !== id);
+      closeHotspotForm();
+      renderScenes();
+      toast('Hotspot deleted.');
+    });
+
+    // ── Startup ──────────────────────────────────────────────────────────────
+    async function main() {
+      if (DEMO) $('demo-badge').hidden = false;
+      store = DEMO ? demoStore() : spStore;
+      for (const d of DEPARTMENTS) $('tour-dept').add(new Option(d, d));
+      $('back-link').href = params.has('demo') ? 'gallery.html?demo' : 'gallery.html';
+
+      try {
+        tours = await store.list(CFG.toursListName, {
+          $select: 'Id,Title,Description0,Department,IsPublished',
+          $orderby: 'Title',
+          $top: '500'
+        });
+      } catch (err) {
+        console.error(err);
+        showStatus(err.status === 401 || err.status === 403
+          ? 'You don’t have access to the tours. Make sure you are signed in to your UMass Boston Microsoft 365 account in this browser.'
+          : `Could not load tours. ${err.message}`, true);
+        return;
+      }
+
+      const wanted = Number(params.get('tourId'));
+      const initial = tours.some((t) => t.Id === wanted) ? wanted : null;
+      renderTourSelect(initial);
+      await selectTour(initial);
+    }
+
+    // ── Demo data (only used off-SharePoint or with ?demo) ───────────────────
+    // Keep in sync with DEMO_DATA in viewer.html.
+    function demoPanorama(label, hue, width = 2048) {
+      const w = width, h = width / 2;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      const sky = g.createLinearGradient(0, 0, 0, h / 2);
+      sky.addColorStop(0, `hsl(${hue} 60% 22%)`);
+      sky.addColorStop(1, `hsl(${hue} 55% 68%)`);
+      g.fillStyle = sky; g.fillRect(0, 0, w, h / 2);
+      const ground = g.createLinearGradient(0, h / 2, 0, h);
+      ground.addColorStop(0, `hsl(${hue + 40} 25% 34%)`);
+      ground.addColorStop(1, `hsl(${hue + 40} 20% 10%)`);
+      g.fillStyle = ground; g.fillRect(0, h / 2, w, h / 2);
+      g.strokeStyle = 'rgba(255,255,255,0.25)'; g.lineWidth = w / 1024;
+      g.fillStyle = '#fff'; g.textAlign = 'center';
+      g.font = `600 ${w / 72}px system-ui, sans-serif`;
+      for (let yaw = -180; yaw < 180; yaw += 30) {
+        const x = ((yaw + 180) / 360) * w;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+        g.fillText(`${yaw}°`, x + (yaw === -180 ? w / 64 : 0), h * 0.55);
+      }
+      g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+      g.font = `700 ${w / 32}px system-ui, sans-serif`;
+      g.fillText(label, w / 2, h * 0.43);
+      g.font = `${w / 85}px system-ui, sans-serif`;
+      g.fillText('Demo panorama — replace with a real 360° photo', w / 2, h * 0.47);
+      return c.toDataURL('image/jpeg', 0.85);
+    }
+
+    const DEMO_DATA = {
+      tours: [
+        { Id: 1, Title: 'Campus Center & HarborWalk', Description0: 'From the Campus Center atrium out to the HarborWalk overlooking Dorchester Bay.', Department: 'Environmental Science', IsPublished: true },
+        { Id: 2, Title: 'Healey Library Walkthrough', Description0: 'A short walk from the library entrance into the reading room.', Department: 'History', IsPublished: true },
+        { Id: 3, Title: 'Nursing Simulation Lab', Description0: 'Unpublished draft — hidden from the gallery.', Department: 'Nursing', IsPublished: false }
+      ],
+      scenes: [
+        { Id: 11, TourID: 1, SortOrder: 1, hue: 215, Title: 'Campus Center Atrium' },
+        { Id: 12, TourID: 1, SortOrder: 2, hue: 190, Title: 'Campus Center Terrace' },
+        { Id: 13, TourID: 1, SortOrder: 3, hue: 30, Title: 'HarborWalk Overlook' },
+        { Id: 21, TourID: 2, SortOrder: 1, hue: 280, Title: 'Healey Library Entrance' },
+        { Id: 22, TourID: 2, SortOrder: 2, hue: 320, Title: 'Reading Room' },
+        { Id: 31, TourID: 3, SortOrder: 1, hue: 150, Title: 'Simulation Lab' }
+      ],
+      hotspots: [
+        { Id: 101, TourID: 1, SceneID: 11, Title: 'Main staircase', InfoText: 'The staircase connects all four floors of the Campus Center.', HotspotPitch: 5, HotspotYaw: -90 },
+        { Id: 102, TourID: 1, SceneID: 13, Title: 'Dorchester Bay', InfoText: 'The HarborWalk runs along the edge of Dorchester Bay, part of Boston Harbor.', HotspotPitch: 0, HotspotYaw: 0 }
+      ]
+    };
+
+    main();
+  </script>
+</body>
+</html>
